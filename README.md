@@ -4,6 +4,7 @@ Linux 服务器配置工具集（Debian / Ubuntu）：
 
 - **代理配置**：全局 HTTP 代理 + 局域网/本机绕过（no_proxy）+ apt 指定源直连
 - **Node 应用部署**：一键生成 PM2 + nginx 反代 + logrotate + fail2ban
+- **开发服务器环境**：整套搭建指南（基础工具 / Node / 安全 / Devin CLI）
 
 ## 文件
 
@@ -13,6 +14,8 @@ Linux 服务器配置工具集（Debian / Ubuntu）：
 | [`proxy-setup.md`](proxy-setup.md) | 代理完整手册：原理、验证、注意事项、回滚 |
 | [`deploy-app.sh`](deploy-app.sh) | Node 应用一键部署脚本（PM2 + nginx + logrotate + fail2ban） |
 | [`deploy-app.md`](deploy-app.md) | Node 部署脚本说明 |
+| [`dev-server-setup.md`](dev-server-setup.md) | 开发服务器整套环境搭建（工具 / Node / PM2 / nginx / 安全 / Devin） |
+| [`devin-cli.md`](devin-cli.md) | Devin CLI 安装与登录 / 初始化指南 |
 
 ## 快速开始
 
