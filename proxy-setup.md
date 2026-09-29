@@ -1,7 +1,7 @@
 # 服务器代理设置手册（可复用）
 
-> 记录一次完整的「全局代理 + 局域网/本机绕过 + apt 指定源直连」配置过程。
-> 以后在新机器或重装后可直接照抄执行。
+> 记录一次完整的「全局 HTTP 代理 + 局域网/本机绕过 + apt 指定源直连」配置过程。
+> 一键脚本见仓库根目录 [`apply-proxy.sh`](apply-proxy.sh)（幂等，可重复执行）。
 
 ---
 
@@ -11,17 +11,15 @@
 - 同时希望**局域网网段、本机地址、环回地址不走代理**；
 - apt 的某个镜像源（如 `mirrors.ustc.edu.cn`）希望**绕过代理直连**。
 
-本手册中的具体值（换机器时替换即可）：
+需要按环境调整的参数：
 
-| 项目 | 本环境的值 |
-|---|---|
-| 代理地址 | `http://10.75.0.6:6789` |
-| 主机名 | `zilong-server-05` |
-| 本机 IP | `10.20.207.7/21` |
-| 网关 | `10.20.200.1` |
-| 默认网卡 | `ens1` |
-| apt 镜像源 | `mirrors.ustc.edu.cn`（直连） |
-| 需走代理的 apt 源 | `security.debian.org` |
+| 参数 | 示例值 | 说明 |
+|---|---|---|
+| `PROXY` | `http://10.75.0.6:6789` | 代理地址 |
+| `APT_DIRECT_HOSTS` | `mirrors.ustc.edu.cn` | 需要直连的 apt 主机（空格分隔多个） |
+
+> **本机地址不写死**：`no_proxy` 统一用私有网段（`10.0.0.0/8` 等）覆盖，
+> 这样 DHCP 换 IP、只要还在同一网段，规则都不用改。
 
 ---
 
@@ -43,81 +41,44 @@
 
 ---
 
-## 3. 一键配置脚本
-
-以 root 运行（`sudo bash apply-proxy.sh` 或 `su -c 'bash apply-proxy.sh'`）。
-脚本**幂等**，可重复执行。
+## 3. 一键配置
 
 ```bash
-#!/bin/bash
-# apply-proxy.sh —— 配置全局代理、no_proxy 绕过、apt 指定源直连
-set -euo pipefail
-export PATH=/sbin:/usr/sbin:/bin:/usr/bin
+# 克隆
+git clone https://github.com/chenxianlong/proxy-setup.git
+cd proxy-setup
 
-########## 按环境修改这几行 ##########
-PROXY="http://10.75.0.6:6789"          # 代理地址
-HOSTNAME_LOCAL="zilong-server-05"       # 本机主机名
-IP_LOCAL="10.20.207.7"                  # 本机 IP
-APT_DIRECT_HOSTS="mirrors.ustc.edu.cn"  # 需要直连的 apt 主机（空格分隔多个）
-####################################
+# 以 root 运行（默认值见脚本顶部，可用环境变量覆盖）
+sudo PROXY=http://10.75.0.6:6789 \
+     APT_DIRECT_HOSTS="mirrors.ustc.edu.cn" \
+     ./apply-proxy.sh
+```
 
-# 局域网 / 本机 / 环回 绕过清单
-NO_PROXY_VAL="localhost,127.0.0.1,::1,0.0.0.0,${HOSTNAME_LOCAL},${IP_LOCAL}"
+脚本逻辑（幂等：先删除旧的 `no_proxy` 行再追加；代理变量已存在则不重复写）：
+
+1. `/etc/environment` —— 写入代理变量 + `no_proxy`
+2. `/etc/profile.d/proxy.sh` —— 写入代理变量 + `no_proxy`
+3. `/etc/apt/apt.conf.d/80proxy` —— apt 全局代理（已存在则备份）
+4. `/etc/apt/apt.conf.d/81proxy-direct` —— apt 对指定主机 `DIRECT`
+
+关键片段：
+
+```bash
+# 私有网段 / 环回 / 链路本地 绕过清单
+# 用整个网段覆盖本机，DHCP 换 IP 也不用改
+NO_PROXY_VAL="localhost,127.0.0.1,::1,0.0.0.0"
 NO_PROXY_VAL="${NO_PROXY_VAL},10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 NO_PROXY_VAL="${NO_PROXY_VAL},169.254.0.0/16,fc00::/7,fe80::/10"
-
-STAMP="$(date +%F-%H%M%S)"
-
-# ---------- 1) /etc/environment（PAM 全局） ----------
-cp -a /etc/environment "/etc/environment.bak.${STAMP}"
-sed -i '/^[Nn][Oo]_[Pp][Rr][Oo][Xx][Yy]=/d' /etc/environment
-# 确保代理变量存在（幂等）
-for v in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy; do
-  grep -q "^${v}=" /etc/environment || printf '%s="%s"\n' "$v" "$PROXY" >> /etc/environment
-done
-printf 'no_proxy="%s"\n'  "$NO_PROXY_VAL" >> /etc/environment
-printf 'NO_PROXY="%s"\n'  "$NO_PROXY_VAL" >> /etc/environment
-
-# ---------- 2) /etc/profile.d/proxy.sh（login shell） ----------
-touch /etc/profile.d/proxy.sh
-cp -a /etc/profile.d/proxy.sh "/etc/profile.d/proxy.sh.bak.${STAMP}"
-sed -i '/^export [Nn][Oo]_[Pp][Rr][Oo][Xx][Yy]=/d' /etc/profile.d/proxy.sh
-for v in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy; do
-  grep -q "^export ${v}=" /etc/profile.d/proxy.sh || \
-    printf 'export %s="%s"\n' "$v" "$PROXY" >> /etc/profile.d/proxy.sh
-done
-printf 'export no_proxy="%s"\n' "$NO_PROXY_VAL" >> /etc/profile.d/proxy.sh
-printf 'export NO_PROXY="%s"\n' "$NO_PROXY_VAL" >> /etc/profile.d/proxy.sh
-chmod 0644 /etc/profile.d/proxy.sh
-
-# ---------- 3) apt 全局代理（80proxy） ----------
-if [ ! -f /etc/apt/apt.conf.d/80proxy ]; then
-  cat > /etc/apt/apt.conf.d/80proxy <<EOF
-Acquire::http::Proxy "${PROXY}";
-Acquire::https::Proxy "${PROXY}";
-EOF
-fi
-
-# ---------- 4) apt 指定主机直连（81proxy-direct，编号大=优先） ----------
-{
-  echo "// 以下主机绕过全局代理，直连"
-  for h in $APT_DIRECT_HOSTS; do
-    echo "Acquire::http::Proxy::${h} \"DIRECT\";"
-    echo "Acquire::https::Proxy::${h} \"DIRECT\";"
-  done
-} > /etc/apt/apt.conf.d/81proxy-direct
-chmod 0644 /etc/apt/apt.conf.d/81proxy-direct
-
-echo "配置完成："
-echo "--- /etc/environment ---";            cat /etc/environment
-echo "--- /etc/profile.d/proxy.sh ---";     cat /etc/profile.d/proxy.sh
-echo "--- apt 80proxy ---";                 cat /etc/apt/apt.conf.d/80proxy
-echo "--- apt 81proxy-direct ---";          cat /etc/apt/apt.conf.d/81proxy-direct
 ```
 
 ---
 
-## 4. 本环境实际写入的内容
+## 4. 实际写入的内容
+
+### `no_proxy`（`/etc/environment` 与 `/etc/profile.d/proxy.sh` 一致）
+```
+localhost,127.0.0.1,::1,0.0.0.0,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10
+```
 
 ### `/etc/environment`
 ```
@@ -127,8 +88,8 @@ HTTP_PROXY="http://10.75.0.6:6789"
 HTTPS_PROXY="http://10.75.0.6:6789"
 ALL_PROXY="http://10.75.0.6:6789"
 all_proxy="http://10.75.0.6:6789"
-no_proxy="localhost,127.0.0.1,::1,0.0.0.0,zilong-server-05,10.20.207.7,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
-NO_PROXY="localhost,127.0.0.1,::1,0.0.0.0,zilong-server-05,10.20.207.7,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
+no_proxy="localhost,127.0.0.1,::1,0.0.0.0,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
+NO_PROXY="localhost,127.0.0.1,::1,0.0.0.0,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
 ```
 
 ### `/etc/profile.d/proxy.sh`
@@ -139,8 +100,8 @@ export HTTP_PROXY="http://10.75.0.6:6789"
 export HTTPS_PROXY="http://10.75.0.6:6789"
 export ALL_PROXY="http://10.75.0.6:6789"
 export all_proxy="http://10.75.0.6:6789"
-export no_proxy="localhost,127.0.0.1,::1,0.0.0.0,zilong-server-05,10.20.207.7,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
-export NO_PROXY="localhost,127.0.0.1,::1,0.0.0.0,zilong-server-05,10.20.207.7,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
+export no_proxy="localhost,127.0.0.1,::1,0.0.0.0,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
+export NO_PROXY="localhost,127.0.0.1,::1,0.0.0.0,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
 ```
 
 ### `/etc/apt/apt.conf.d/80proxy`
@@ -151,7 +112,7 @@ Acquire::https::Proxy "http://10.75.0.6:6789";
 
 ### `/etc/apt/apt.conf.d/81proxy-direct`
 ```
-// 以下主机绕过全局代理，直连
+// 以下主机绕过全局代理，直连（由 apply-proxy.sh 生成）
 Acquire::http::Proxy::mirrors.ustc.edu.cn "DIRECT";
 Acquire::https::Proxy::mirrors.ustc.edu.cn "DIRECT";
 ```
@@ -163,13 +124,13 @@ Acquire::https::Proxy::mirrors.ustc.edu.cn "DIRECT";
 | 条目 | 含义 |
 |---|---|
 | `localhost`, `127.0.0.1`, `::1`, `0.0.0.0` | 环回 |
-| `zilong-server-05`, `10.20.207.7` | 本机主机名 / 本机 IP |
-| `10.0.0.0/8` | 私有网段 A 类（含本机 10.20.x 和代理 10.75.x） |
+| `10.0.0.0/8` | 私有网段 A 类（本机 10.x 地址也在此范围内） |
 | `172.16.0.0/12` | 私有网段 B 类 |
 | `192.168.0.0/16` | 私有网段 C 类 |
 | `169.254.0.0/16` | 链路本地 |
 | `fc00::/7`, `fe80::/10` | IPv6 私有 / 链路本地 |
 
+> 用网段而非具体 IP，DHCP 换地址（同段）时无需修改。
 > CIDR 支持：`curl`、`go`、`python-requests`、`node` 等新版本都认 `x.x.x.x/nn`；
 > 老版本 `wget` 只认域名后缀，对 CIDR 可能无效。
 
@@ -230,7 +191,9 @@ su -l $USER -c 'env | grep -i proxy'           # 重新登录确认
 
 ---
 
-## 9. 源文件与备份位置
+## 9. 备份位置
+
+被修改的文件都会在同目录生成带时间戳的备份：
 
 | 文件 | 备份 |
 |---|---|
@@ -240,4 +203,4 @@ su -l $USER -c 'env | grep -i proxy'           # 重新登录确认
 
 ---
 
-*生成时间：2026-09-29*
+*最后更新：2026-09-29*
