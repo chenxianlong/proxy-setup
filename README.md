@@ -1,15 +1,18 @@
 # proxy-setup
 
-Linux 服务器代理配置工具：**全局 HTTP 代理 + 局域网/本机绕过（no_proxy）+ apt 指定源直连**。
+Linux 服务器配置工具集（Debian / Ubuntu）：
 
-适用 Debian / Ubuntu（使用 `apt` 与 `/etc/profile.d`）。
+- **代理配置**：全局 HTTP 代理 + 局域网/本机绕过（no_proxy）+ apt 指定源直连
+- **Node 应用部署**：一键生成 PM2 + nginx 反代 + logrotate + fail2ban
 
 ## 文件
 
 | 文件 | 说明 |
 |---|---|
-| [`apply-proxy.sh`](apply-proxy.sh) | 幂等的一键配置脚本（必须以 root 运行） |
-| [`proxy-setup.md`](proxy-setup.md) | 完整操作手册：原理、验证方法、注意事项、回滚 |
+| [`apply-proxy.sh`](apply-proxy.sh) | 代理配置脚本（幂等，root 运行） |
+| [`proxy-setup.md`](proxy-setup.md) | 代理完整手册：原理、验证、注意事项、回滚 |
+| [`deploy-app.sh`](deploy-app.sh) | Node 应用一键部署脚本（PM2 + nginx + logrotate + fail2ban） |
+| [`deploy-app.md`](deploy-app.md) | Node 部署脚本说明 |
 
 ## 快速开始
 
@@ -67,6 +70,27 @@ sudo apt-get update -o Debug::Acquire::http=true 2>&1 | grep -E '^(GET|Host:)'
 - systemd 服务、cron、Docker 容器默认**不继承**这些变量，需单独配置。
 - apt **不读** `no_proxy`，绕过必须用 per-host `DIRECT`。
 - 详细原理与回滚见 [`proxy-setup.md`](proxy-setup.md)。
+
+---
+
+## Node 应用一键部署（deploy-app.sh）
+
+```bash
+sudo ./deploy-app.sh --name myapp --port 3000 --domain app.example.com --user zilong
+```
+
+自动生成：
+
+| 组件 | 位置 |
+|---|---|
+| PM2 ecosystem | `/srv/<name>/ecosystem.config.js` |
+| nginx 反代 | `/etc/nginx/sites-available/<name>` |
+| 日志轮转 | `/etc/logrotate.d/<name>` |
+| fail2ban jail | `/etc/fail2ban/filter.d/<name>.conf` + `jail.local` |
+
+卸载：`sudo ./deploy-app.sh --name myapp --remove [--purge]`
+
+详细用法见 [`deploy-app.md`](deploy-app.md)。
 
 ## License
 
